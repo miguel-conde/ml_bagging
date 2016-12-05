@@ -1,0 +1,129 @@
+---
+title: "Playing with bagging"
+author: "Miguel Conde"
+date: "5 de diciembre de 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.align = "center")
+```
+
+**Bagging** is a general approach that uses bootstrapping in conjunction with any regression or classification model to construct an ensemble. 
+The method is fairly simple in structure: each model in the ensemble is generated from a bootstrap sample of the original data and then used to generate a prediction for a new sample.
+All these predictions are finally counted or averaged to give the bagged model’s prediction.
+
+Bagging models effectively reduces the variance of a prediction through its aggregation process but offers less improvement in predictive performance.
+
+In its basic form, the user has one choice to make for bagging: the number
+of bootstrap samples to aggregate, $m$. Often we see an exponential decrease
+in predictive improvement as the number of iterations increases; the most
+improvement in prediction performance is obtained with a small number of
+trees ($m < 10$).
+
+Although bagging usually improves predictive performance for unstable
+models, there are a few caveats. 
+
+  + First, computational costs and memory
+requirements increase as the number of bootstrap samples increases. This
+disadvantage can be mostly mitigated if the modeler has access to parallel
+computing because the bagging process can be easily parallelized. Recall that
+each bootstrap sample and corresponding model is independent of any other sample and model. This means that each model can be built separately and
+all models can be brought together in the end to generate the prediction.
+  + Another disadvantage to this approach is that a bagged model is much
+less interpretable than a model that is not bagged.
+
+*Bagging* means *Bootstrap* + *Aggregating*. Let's see what do these two terms mean.
+
+## The Bootstrap
+The Bootstrap is a **resampling technique**. As stated in [Kuhn and Jhonson's "Applied predictive Modeling"](http://appliedpredictivemodeling.com/):
+
+"Generally, resampling techniques for estimating model performance operate
+similarly: a subset of samples are used to fit a model and the remaining samples are used to estimate the efficacy of the model. This process is repeated multiple times and the results are aggregated and summarized. The differences in techniques usually center around the method in which subsamples
+are chosen.
+
+A **bootstrap sample** is a random sample of the data taken *with replacement*. 
+
+*This means that, after a data point is selected for the subset, it is still available for further selection*. 
+
+The bootstrap sample is the same size as the original data set. As a result, some samples will be represented multiple times in the bootstrap sample while others will not be selected at all. 
+
+The samples not selected are usually referred to as the **“out-of-bag”** samples. 
+
+For a given iteration of bootstrap resampling, *a model is built on the selected samples and is used to predict the out-of-bag samples*.
+
+In general, bootstrap error rates tend to have less uncertainty than k-fold
+cross-validation. However, on average, 63.2% of the data points
+the bootstrap sample are represented at least once, so this technique has bias similar to k-fold cross-validation when k ≈ 2. If the training set size is small, this bias may be problematic, but will decrease as the training set sample size becomes larger".
+
+### The `caret` package and The Bootstrap
+[`caret` package](https://cran.r-project.org/web/packages/caret/index.html) provides means to build bootstrap resamples.
+
+Let's use this data set
+
+```{r}
+library(C50)
+data(churn)
+
+dim(churnTrain)
+```
+
+to build, for instance, 10 bootstrapped resamples:
+```{r}
+library(caret)
+
+NUM_BOOTS_RESAMPS = 10
+
+set.seed(123)
+
+churnBootstrap <- createResample(churnTrain$churn, times = NUM_BOOTS_RESAMPS)
+str(churnBootstrap)
+```
+A list with 10 elements is returned, each of wich a bootstrapped resample of the indexes in `churnTrain$churn`.
+
+As you can see, all the resamples lengths are equal to the number of observations (rows) in  `churnTrain` and inside every resample several indexes are repeated, due to the "sampling with replacement" strategy used ti build each sample.
+
+## Aggregating
+Now we can use each of this bootstrapped resamples to build a model to predict `churnTrain$churn`. The results of these 10 models will be used to build our final bagged model.
+
+Let's use [C5.0 CART](http://es100x100datascience.com/arboles-de-decision-iv/) trees:
+
+```{r}
+list_of_models <- lapply(churnBootstrap, function(x) {
+  C5.0(x       = churnTrain[x, -20],
+       y       = churnTrain[x, "churn"],
+       trials  = 1,
+       rules   = FALSE,
+       weights = NULL,
+       control = C5.0Control(),
+       costs   = NULL)
+  })
+```
+
+Now each model will be used to predict on the test set (in this very simple example, one model, one vote):
+
+```{r}
+multiPredict <- sapply(list_of_models, predict, churnTest)
+```
+
+And count the votes to emit the final decision:
+
+```{r}
+finalDecision <- apply(multiPredict, 1, function(x) {
+  if (sum(x == "yes") > sum(x == "no"))
+    return("yes")
+  else
+    return("no")
+})
+
+finalDecision <- factor(finalDecision, levels = levels(churnTest$churn))
+```
+
+To check the efficiency we can use a confusion matrix:
+```{r}
+confusionMatrix(reference = churnTest$churn, data = finalDecision)
+```
+
+It's interesting to compare these results with those in [Árboles de decisión (IV)](http://es100x100datascience.com/arboles-de-decision-iv/).
+
