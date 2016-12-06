@@ -69,16 +69,16 @@ data(churn)
 dim(churnTrain)
 ```
 
-to build, for instance, 10 bootstrapped resamples:
+to build, for instance, 100 bootstrapped resamples:
 ```{r}
 library(caret)
 
-NUM_BOOTS_RESAMPS = 10
+NUM_BOOTS_RESAMPS = 100
 
 set.seed(123)
 
 churnBootstrap <- createResample(churnTrain$churn, times = NUM_BOOTS_RESAMPS)
-str(churnBootstrap)
+str(churnBootstrap[1:10])
 ```
 A list with 10 elements is returned, each of wich a bootstrapped resample of the indexes in `churnTrain$churn`.
 
@@ -126,4 +126,59 @@ confusionMatrix(reference = churnTest$churn, data = finalDecision)
 ```
 
 It's interesting to compare these results with those in [Árboles de decisión (IV)](http://es100x100datascience.com/arboles-de-decision-iv/).
+
+## Performance
+What we'll do here is make a comparison between the final bagging model and the individual models. 
+We'll use these functions:
+```{r}
+kpiPlot<- function(kpis, kpi = "Accuracy") {
+  boxplot(kpis[, kpi], 
+          # ylim = c(0.9995*min(kpis[, kpi]), 1.0005*max(kpis[, kpi]))
+          main = kpi)
+  abline(h = kpis["Bagging Model", kpi], col = "red")
+}
+
+getPerfKPIs <- function(list_of_models, pred, tgt, finalDecision) {
+  cms <- lapply(list_of_models, function(x) {
+    confusionMatrix(data = predict(x, pred), tgt)
+  })
+  
+  kpis <- 
+    rbind(as.data.frame(t(sapply(cms, function(x) {x$overal}))), 
+          confusionMatrix(reference = tgt, data = finalDecision)$overall)
+  kpis <- 
+    cbind(kpis,
+          rbind(as.data.frame(t(sapply(cms, function(x) {x$byClass}))),
+                confusionMatrix(reference = tgt, data = finalDecision)$byClass))
+  
+  rownames(kpis) <- c(sprintf("Modelo %d", 1:NUM_BOOTS_RESAMPS), "Bagging Model")
+  
+  kpis
+}
+```
+
+And now:
+```{r}
+kpis <- getPerfKPIs(list_of_models, churnTest, 
+                    churnTest$churn, finalDecision)
+
+par(mfrow = c(3,3))
+kpiPlot(kpis, "Accuracy")
+kpiPlot(kpis, "Kappa")
+kpiPlot(kpis, "Sensitivity")
+kpiPlot(kpis, "Specificity")
+kpiPlot(kpis, "Pos Pred Value")
+kpiPlot(kpis, "Neg Pred Value")
+kpiPlot(kpis, "Precision")
+kpiPlot(kpis, "Recall")
+kpiPlot(kpis, "F1")
+par(mfrow = c(1,1))
+```
+
+As you can see, all the performance indicators (red lines) of the final model are at the upper side of the boxplots and, in many cases, they are clearly better than those of the individual models.
+
+## Session Info
+```{r}
+sessionInfo()
+```
 
